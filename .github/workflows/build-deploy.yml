@@ -1,0 +1,58 @@
+name: Build and deploy to GAE
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: 'ubuntu-latest'
+    steps:
+      - uses: actions/checkout@v4
+      #Set up JDK 17
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      #Set up Maven cache
+      - name: Cache Maven packages
+        #This action allows caching dependencies and build outputs to improve workflow execution time.
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2
+          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+          restore-keys: ${{ runner.os }}-m2
+      - name: Inject env variables
+        run: |
+          sed -i "s|%SUPABASE-JWT-SECRET%|${{ secrets.SUPABASE_JWT_SECRET }}|g" src/main/appengine/app.yaml
+          sed -i "s|%SUPABASE-JWT-ISSUER%|${{ secrets.SUPABASE_JWT_ISSUER }}|g" src/main/appengine/app.yaml
+      - name: Build with Maven
+        run: mvn -B package -DskipTests --file pom.xml
+      
+      # Authenticate to Google Cloud
+      - id: 'auth'
+        name: 'Authenticate to Google Cloud'
+        uses: 'google-github-actions/auth@v1'
+        with:
+          credentials_json: '${{ secrets.GCP_SA_KEY }}'
+          export_environment_variables: true
+          create_credentials_file: true
+          cleanup_credentials: true
+      
+      # Setup gcloud CLI with App Engine Java components
+      - name: 'Set up Cloud SDK'
+        uses: 'google-github-actions/setup-gcloud@v1'
+        with:
+          install_components: 'app-engine-java'
+          project_id: 'billio-dev-455615' # Set the project ID
+      
+      # Verify gcloud configuration
+      - name: 'Verify gcloud configuration'
+        run: gcloud config list
+      
+      # Deploy to App Engine
+      - name: 'Deploy to App Engine'
+        run: './mvnw package appengine:deploy -DskipTests'
